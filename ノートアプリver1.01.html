@@ -1,0 +1,677 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>多機能ノート</title>
+    
+    <!-- ★Safari用アプリ化設定 -->
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="多機能ノート">
+    <link rel="apple-touch-icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mPk5+efDwABCwEA9sDIPwAAAABJRU5ErkJggg==">
+
+    <!-- Fabric.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js"></script>
+    <!-- JSZip -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <!-- FontAwesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        /* --- 基本スタイル --- */
+        * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        body {
+            margin: 0; padding: 0; overflow: hidden;
+            padding-top: env(safe-area-inset-top);
+            padding-bottom: env(safe-area-inset-bottom);
+            background-color: #ccc; font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+            display: flex; flex-direction: column; height: 100vh;
+        }
+
+        #loading-overlay {
+            display: none; position: absolute; top:0; left:0; width:100%; height:100%;
+            background: rgba(255,255,255,0.9); z-index: 9999;
+            justify-content: center; align-items: center; flex-direction: column; font-weight: bold; color: #333;
+        }
+
+        .nav-bar {
+            background: #333; color: #fff; height: 44px; flex-shrink: 0;
+            display: flex; justify-content: center; align-items: center; gap: 15px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2); z-index: 10;
+        }
+        .nav-btn {
+            background: #555; border: 1px solid #777; color: #fff;
+            height: 28px; border-radius: 14px; padding: 0 12px; font-size: 12px; cursor: pointer;
+        }
+
+        .toolbar {
+            background: #f8f9fa; height: 64px; flex-shrink: 0;
+            display: flex; align-items: center; gap: 6px; padding: 0 10px;
+            overflow-x: auto; border-bottom: 1px solid #bbb;
+            white-space: nowrap;
+            -webkit-overflow-scrolling: touch; 
+            scrollbar-width: none;
+        }
+        .toolbar::-webkit-scrollbar { display: none; }
+
+        .btn {
+            background: #fff; border: 1px solid #ccc; border-radius: 8px;
+            height: 40px; padding: 0 10px; font-weight: bold; color: #444;
+            display: flex; align-items: center; gap: 5px; flex-shrink: 0;
+            font-size: 12px; cursor: pointer; transition: all 0.1s;
+        }
+        .btn:active { transform: scale(0.95); }
+        .btn.active { background: #e3f2fd; border-color: #2196f3; color: #1565c0; box-shadow: inset 0 2px 4px rgba(0,0,0,0.1); }
+
+        .btn-pen1 { border-left: 4px solid #333; }
+        .btn-pen2 { border-left: 4px solid #d32f2f; }
+
+        .btn-red { color: #c62828; background: #ffebee; border-color: #ef9a9a; }
+        .btn-green { color: #2e7d32; background: #e8f5e9; border-color: #a5d6a7; }
+        .btn-blue { color: #1565c0; background: #e3f2fd; border-color: #90caf9; }
+        .btn-purple { color: #fff; background: #8e24aa; border-color: #7b1fa2; }
+
+        #pen-settings { 
+            display: none; align-items: center; gap: 5px; margin: 0 5px; 
+            background: #fff; padding: 2px 8px; border-radius: 20px; border: 1px solid #ddd;
+        }
+        input[type="color"] { border: none; width: 28px; height: 28px; background: none; cursor: pointer; }
+        input[type="range"] { width: 70px; cursor: pointer; }
+        input[type="file"] { display: none; }
+
+        .sep { width: 1px; height: 28px; background: #ccc; margin: 0 2px; }
+
+        #canvas-container {
+            flex-grow: 1; position: relative; overflow: hidden;
+            display: flex; justify-content: center; align-items: center;
+            background: #e0e0e0;
+            touch-action: none;
+        }
+        #status { font-size: 10px; color: #666; position: absolute; right: 10px; bottom: 5px; pointer-events: none; }
+    </style>
+</head>
+<body>
+
+    <div id="loading-overlay">
+        <div style="font-size: 30px; margin-bottom: 10px;"><i class="fas fa-circle-notch fa-spin"></i></div>
+        <div id="loading-text">処理中...</div>
+    </div>
+
+    <div class="nav-bar">
+        <button class="nav-btn" id="prevPage"><i class="fas fa-chevron-left"></i> 前へ</button>
+        <span style="font-weight:bold; font-size:14px;" id="pageDisplay">ページ 1 / 1</span>
+        <button class="nav-btn" id="nextPage">次へ <i class="fas fa-chevron-right"></i></button>
+    </div>
+
+    <div class="toolbar">
+        <button class="btn" id="undoBtn"><i class="fas fa-undo"></i></button>
+        <button class="btn" id="redoBtn"><i class="fas fa-redo"></i></button>
+        
+        <div class="sep"></div>
+
+        <button class="btn active" id="modeMove">🖐 移動</button>
+        
+        <button class="btn btn-pen1" id="pen1Btn">✏️ ペン1</button>
+        <button class="btn btn-pen2" id="pen2Btn">🖍️ ペン2</button>
+        
+        <button class="btn" id="modeEraser">🧹 消しゴム</button>
+
+        <div id="pen-settings">
+            <input type="color" id="penColor">
+            <input type="range" id="penSize" min="1" max="30">
+        </div>
+
+        <div class="sep"></div>
+
+        <button class="btn" onclick="document.getElementById('imgInput').click()"><i class="far fa-image"></i> 写真</button>
+        <input type="file" id="imgInput" accept="image/*">
+        <button class="btn btn-red" id="delSelected"><i class="fas fa-times"></i> 削除</button>
+
+        <div style="flex-grow:1;"></div>
+
+        <button class="btn btn-green" id="saveFile"><i class="fas fa-file-export"></i> データ</button>
+        <input type="file" id="loadFile" accept=".zip,.json">
+        <button class="btn" onclick="document.getElementById('loadFile').click()"><i class="fas fa-folder-open"></i> 読込</button>
+        
+        <button class="btn btn-blue" id="saveAllImages"><i class="fas fa-images"></i> 全画像</button>
+        
+        <div class="sep"></div>
+        <button class="btn btn-purple" id="openNotebookLM"><i class="fas fa-robot"></i> LM</button>
+    </div>
+
+    <div id="canvas-container">
+        <canvas id="c"></canvas>
+        <div id="status">Ready</div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            
+            // --- 1. キャンバス準備 ---
+            const container = document.getElementById('canvas-container');
+            const canvas = new fabric.Canvas('c', { 
+                isDrawingMode: false, 
+                selection: true,
+                preserveObjectStacking: true 
+            });
+            canvas.freeDrawingBrush = new fabric.PencilBrush(canvas);
+
+            function getBackgroundPattern() {
+                const bg = document.createElement('canvas');
+                bg.width = 40; bg.height = 40;
+                const ctx = bg.getContext('2d');
+                ctx.fillStyle = '#fffdf5'; ctx.fillRect(0,0,40,40);
+                ctx.beginPath(); ctx.moveTo(0,39); ctx.lineTo(40,39);
+                ctx.strokeStyle = '#b0c4de'; ctx.lineWidth = 1; ctx.stroke();
+                return new fabric.Pattern({ source: bg, repeat: 'repeat' });
+            }
+
+            function setCanvasBackground(targetCanvas) {
+                targetCanvas.setBackgroundColor(getBackgroundPattern(), targetCanvas.renderAll.bind(targetCanvas));
+            }
+
+            function resize() {
+                canvas.setWidth(container.clientWidth);
+                canvas.setHeight(container.clientHeight);
+                setCanvasBackground(canvas);
+            }
+            window.addEventListener('resize', resize);
+            setTimeout(resize, 50);
+
+
+            // --- 2. ペン設定 (2種) ---
+            const penConfigs = {
+                1: { color: '#000000', width: 2 },
+                2: { color: '#ff0000', width: 4 }
+            };
+            let activePenId = 1;
+            const penColorInput = document.getElementById('penColor');
+            const penSizeInput = document.getElementById('penSize');
+
+            function syncPenPanel() {
+                penColorInput.value = penConfigs[activePenId].color;
+                penSizeInput.value = penConfigs[activePenId].width;
+            }
+            function updateCurrentPenConfig() {
+                penConfigs[activePenId].color = penColorInput.value;
+                penConfigs[activePenId].width = parseInt(penSizeInput.value, 10);
+                if(canvas.freeDrawingBrush) {
+                    canvas.freeDrawingBrush.color = penConfigs[activePenId].color;
+                    canvas.freeDrawingBrush.width = penConfigs[activePenId].width;
+                }
+            }
+            penColorInput.onchange = updateCurrentPenConfig;
+            penSizeInput.oninput = updateCurrentPenConfig;
+
+
+            // --- 3. IndexedDB ヘルパー ---
+            const DB_NAME = 'notebook_db';
+            const DB_VERSION = 1;
+            const STORE_NAME = 'pages';
+            const LS_KEY = 'notebook_safari_final';
+
+            function openDB() {
+                return new Promise((resolve, reject) => {
+                    const req = indexedDB.open(DB_NAME, DB_VERSION);
+                    req.onupgradeneeded = (e) => {
+                        const db = e.target.result;
+                        if (!db.objectStoreNames.contains(STORE_NAME)) {
+                            db.createObjectStore(STORE_NAME);
+                        }
+                    };
+                    req.onsuccess = () => resolve(req.result);
+                    req.onerror = () => reject(req.error);
+                });
+            }
+            async function saveToIDB(data) {
+                const db = await openDB();
+                return new Promise((resolve, reject) => {
+                    const tx = db.transaction(STORE_NAME, 'readwrite');
+                    tx.objectStore(STORE_NAME).put(data, 'currentPages');
+                    tx.oncomplete = () => resolve();
+                    tx.onerror = () => reject(tx.error);
+                });
+            }
+            async function loadFromIDB() {
+                const db = await openDB();
+                return new Promise((resolve, reject) => {
+                    const tx = db.transaction(STORE_NAME, 'readonly');
+                    const r = tx.objectStore(STORE_NAME).get('currentPages');
+                    r.onsuccess = () => resolve(r.result);
+                    r.onerror = () => reject(r.error);
+                });
+            }
+
+            // --- 画像分離・復元ヘルパー (ZIP用) ---
+            function extractImagesFromPages(pagesArray) {
+                const images = {};
+                let counter = 0;
+                const processed = pagesArray.map(pj => {
+                    if (!pj) return null;
+                    const pd = typeof pj === 'string' ? JSON.parse(pj) : JSON.parse(JSON.stringify(pj));
+                    if (pd && pd.objects) {
+                        pd.objects.forEach(obj => {
+                            if (obj.type === 'image' && obj.src && obj.src.startsWith('data:')) {
+                                const key = `img_${counter++}`;
+                                images[key] = obj.src;
+                                obj.src = `__REF__${key}`;
+                            }
+                        });
+                    }
+                    return JSON.stringify(pd);
+                });
+                return { processed, images };
+            }
+            function restoreImagesInPages(pagesArray, images) {
+                return pagesArray.map(pj => {
+                    if (!pj) return null;
+                    const pd = typeof pj === 'string' ? JSON.parse(pj) : pj;
+                    if (pd && pd.objects) {
+                        pd.objects.forEach(obj => {
+                            if (obj.type === 'image' && obj.src && obj.src.startsWith('__REF__')) {
+                                const key = obj.src.replace('__REF__', '');
+                                if (images[key]) obj.src = images[key];
+                            }
+                        });
+                    }
+                    return typeof pd === 'string' ? pd : JSON.stringify(pd);
+                });
+            }
+            function dataUrlToUint8(dataUrl) {
+                const parts = dataUrl.split(',');
+                const mime = parts[0].match(/:(.*?);/)[1];
+                const bin = atob(parts[1]);
+                const arr = new Uint8Array(bin.length);
+                for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+                return { arr, mime };
+            }
+            function blobToDataUrl(blob) {
+                return new Promise(res => {
+                    const r = new FileReader();
+                    r.onload = () => res(r.result);
+                    r.readAsDataURL(blob);
+                });
+            }
+
+
+            // --- 4. データ管理 ---
+            let pages = [null];
+            let curP = 0;
+            let history = [];
+            let hIdx = -1;
+            let saveTimer = null;
+            let isProcessing = false;
+            let suppressHistory = false;
+
+            function pushHistory() {
+                if (suppressHistory || isProcessing) return;
+                const currentJson = JSON.stringify(canvas.toJSON());
+                if (hIdx < history.length - 1) history = history.slice(0, hIdx + 1);
+                if (history.length === 0 || history[history.length - 1] !== currentJson) {
+                    history.push(currentJson);
+                    hIdx++;
+                }
+            }
+
+            function snapshot() {
+                pages[curP] = JSON.stringify(canvas.toJSON());
+            }
+            function requestAutoSave() {
+                if (suppressHistory) return;
+                document.getElementById('status').innerText = "保存待機中...";
+                clearTimeout(saveTimer);
+                saveTimer = setTimeout(() => performSave(), 1000);
+            }
+            async function performSave() {
+                if(isProcessing) return;
+                snapshot();
+                try {
+                    await saveToIDB(pages);
+                    document.getElementById('status').innerText = "保存完了";
+                } catch(e) {
+                    document.getElementById('status').innerText = "自動保存失敗";
+                }
+            }
+            function switchPage(idx, skipSnapshot = false) {
+                clearTimeout(saveTimer);
+                if (!skipSnapshot) snapshot();
+                curP = idx;
+                suppressHistory = true;
+                canvas.clear();
+                history = []; hIdx = -1;
+                const data = pages[idx];
+                if (data) canvas.loadFromJSON(data, () => { suppressHistory = false; afterLoad(); });
+                else { suppressHistory = false; afterLoad(); }
+            }
+            function afterLoad() {
+                if(!canvas.backgroundColor) setCanvasBackground(canvas);
+                document.getElementById('pageDisplay').innerText = `ページ ${curP + 1} / ${Math.max(pages.length, 1)}`;
+                applyModeLocks(); 
+                canvas.renderAll();
+                // 初期状態を履歴に保存（Undoの起点）
+                const initialJson = JSON.stringify(canvas.toJSON());
+                history = [initialJson];
+                hIdx = 0;
+            }
+
+            canvas.on('object:added', () => { pushHistory(); requestAutoSave(); });
+            canvas.on('object:modified', () => { pushHistory(); requestAutoSave(); });
+            canvas.on('object:removed', () => { pushHistory(); requestAutoSave(); });
+            canvas.on('path:created', () => { pushHistory(); requestAutoSave(); });
+
+
+            // --- 5. モード制御 ---
+            const bMove = document.getElementById('modeMove');
+            const bPen1 = document.getElementById('pen1Btn');
+            const bPen2 = document.getElementById('pen2Btn');
+            const bEra = document.getElementById('modeEraser');
+            const penSettingsPanel = document.getElementById('pen-settings');
+            let currentMode = 'move';
+
+            function applyModeLocks() {
+                const objs = canvas.getObjects();
+                objs.forEach(o => {
+                    if (currentMode === 'move') {
+                        o.set({ selectable: true, evented: true });
+                    } else if (currentMode === 'pen') {
+                        o.set({ selectable: false, evented: false });
+                    } else if (currentMode === 'eraser') {
+                        o.set({ selectable: false, evented: true });
+                    }
+                });
+                canvas.requestRenderAll();
+            }
+
+            function setMode(mode, penId = null) {
+                canvas.discardActiveObject();
+                currentMode = mode;
+                [bMove, bPen1, bPen2, bEra].forEach(b => b.classList.remove('active'));
+                penSettingsPanel.style.display = 'none';
+
+                if (mode === 'move') {
+                    bMove.classList.add('active');
+                    canvas.isDrawingMode = false;
+                    canvas.selection = true;
+                    canvas.defaultCursor = 'default';
+                } else if (mode === 'pen') {
+                    canvas.isDrawingMode = true;
+                    if (penId === 1) bPen1.classList.add('active');
+                    if (penId === 2) bPen2.classList.add('active');
+                    if (penId) activePenId = penId;
+                    syncPenPanel();
+                    updateCurrentPenConfig();
+                    penSettingsPanel.style.display = 'flex';
+                    canvas.defaultCursor = 'crosshair';
+                } else if (mode === 'eraser') {
+                    bEra.classList.add('active');
+                    canvas.isDrawingMode = false;
+                    canvas.selection = false;
+                    canvas.defaultCursor = 'not-allowed';
+                }
+                applyModeLocks();
+            }
+
+            bMove.onclick = () => setMode('move');
+            bPen1.onclick = () => setMode('pen', 1);
+            bPen2.onclick = () => setMode('pen', 2);
+            bEra.onclick = () => setMode('eraser');
+
+
+            // --- 6. 機能 ---
+            document.getElementById('imgInput').onchange = (e) => {
+                const f = e.target.files[0];
+                if(!f) return;
+                const r = new FileReader();
+                r.onload = (res) => {
+                    fabric.Image.fromURL(res.target.result, (img) => {
+                        const maxW = 1000;
+                        if(img.width > maxW) img.scaleToWidth(maxW);
+                        img.scaleToWidth(canvas.width * 0.5);
+                        img.set({left: canvas.width/2, top: canvas.height/2, originX:'center', originY:'center'});
+                        canvas.add(img);
+                        canvas.setActiveObject(img);
+                        setMode('move');
+                        requestAutoSave();
+                    });
+                };
+                r.readAsDataURL(f);
+                e.target.value = '';
+            };
+
+            document.getElementById('delSelected').onclick = () => {
+                const active = canvas.getActiveObjects();
+                if(active.length) {
+                    active.forEach(o => canvas.remove(o));
+                    canvas.discardActiveObject();
+                    requestAutoSave();
+                } else {
+                    alert("移動モードで選択してから削除してください");
+                }
+            };
+
+            let erasing = false;
+            canvas.on('mouse:down', (o) => { if(currentMode==='eraser') erasing=true; doErase(o); });
+            canvas.on('mouse:move', (o) => { if(erasing) doErase(o); });
+            canvas.on('mouse:up', () => erasing=false);
+            function doErase(o) {
+                if(erasing && currentMode==='eraser' && o.target) {
+                    if(o.target.type === 'image') return;
+                    canvas.remove(o.target);
+                }
+            }
+
+            // ★ ZIP保存
+            document.getElementById('saveFile').onclick = async () => {
+                snapshot();
+                const overlay = document.getElementById('loading-overlay');
+                const txt = document.getElementById('loading-text');
+                overlay.style.display = 'flex';
+                txt.innerText = "データを保存中...";
+                isProcessing = true;
+                try {
+                    const zip = new JSZip();
+                    const { processed, images } = extractImagesFromPages([...pages]);
+                    zip.file('data.json', JSON.stringify(processed));
+                    for (const [key, dataUrl] of Object.entries(images)) {
+                        const { arr, mime } = dataUrlToUint8(dataUrl);
+                        const ext = (mime.split('/')[1] || 'png').split('+')[0];
+                        zip.file(`images/${key}.${ext}`, arr);
+                    }
+                    const content = await zip.generateAsync({ type: 'blob' });
+                    const name = `Note_${Date.now()}.zip`;
+
+                    // まずダウンロードリンク方式を試行
+                    const a = document.createElement('a');
+                    a.href = URL.createObjectURL(content);
+                    a.download = name;
+                    a.style.display = 'none';
+                    document.body.appendChild(a);
+                    a.click();
+                    setTimeout(() => {
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(a.href);
+                    }, 500);
+
+                    // iOS Safari等ではダウンロードが効かないのでshareも試行
+                    try {
+                        const file = new File([content], name, { type: 'application/zip' });
+                        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+                            await navigator.share({ files: [file] });
+                        }
+                    } catch(shareErr) {
+                        // share失敗は無視（ダウンロードリンクで既に保存済みの場合）
+                    }
+                } catch(e) {
+                    alert("保存エラー: " + e);
+                } finally {
+                    overlay.style.display = 'none';
+                    isProcessing = false;
+                }
+            };
+
+            // ★ ファイル読込 (ZIP / レガシーJSON両対応)
+            document.getElementById('loadFile').onchange = async (e) => {
+                const f = e.target.files[0];
+                if (!f) return;
+                const overlay = document.getElementById('loading-overlay');
+                const txt = document.getElementById('loading-text');
+                overlay.style.display = 'flex';
+                txt.innerText = "読み込み中...";
+                isProcessing = true;
+                try {
+                    if (f.name.toLowerCase().endsWith('.zip')) {
+                        const zip = await JSZip.loadAsync(f);
+                        const dataJson = await zip.file('data.json').async('string');
+                        const loadedPages = JSON.parse(dataJson);
+                        const images = {};
+                        const imgFolder = zip.folder('images');
+                        if (imgFolder) {
+                            const imgFiles = [];
+                            imgFolder.forEach((rp, file) => { if (!file.dir) imgFiles.push({ rp, file }); });
+                            for (const { rp, file } of imgFiles) {
+                                txt.innerText = `画像を復元中...`;
+                                const key = rp.replace(/\.[^.]+$/, '');
+                                const blob = await file.async('blob');
+                                images[key] = await blobToDataUrl(blob);
+                            }
+                        }
+                        pages = restoreImagesInPages(loadedPages, images);
+                        try { await saveToIDB(pages); } catch(e) {}
+                        switchPage(0, true);
+                        alert("完了");
+                    } else {
+                        const text = await f.text();
+                        const d = JSON.parse(text);
+                        if (Array.isArray(d)) {
+                            pages = d;
+                            try { await saveToIDB(pages); } catch(e) {}
+                            switchPage(0, true);
+                            alert("完了");
+                        } else { throw new Error("形式エラー"); }
+                    }
+                } catch(e) {
+                    alert("読み込みに失敗しました: " + e.message);
+                } finally {
+                    overlay.style.display = 'none';
+                    isProcessing = false;
+                }
+                e.target.value = '';
+            };
+
+            // 全画像保存
+            document.getElementById('saveAllImages').onclick = async () => {
+                const overlay = document.getElementById('loading-overlay');
+                const txt = document.getElementById('loading-text');
+                overlay.style.display = 'flex';
+                txt.innerText = "画像を生成中...";
+                isProcessing = true;
+                try {
+                    snapshot();
+                    const files = [];
+                    const tempEl = document.createElement('canvas');
+                    tempEl.width = canvas.width;
+                    tempEl.height = canvas.height;
+                    const tempC = new fabric.StaticCanvas(tempEl);
+                    setCanvasBackground(tempC);
+
+                    for (let i = 0; i < pages.length; i++) {
+                        txt.innerText = `${i + 1} / ${pages.length} 枚目を生成中...`;
+                        const pageData = pages[i];
+                        await new Promise(resolve => {
+                            if (pageData) {
+                                tempC.loadFromJSON(pageData, () => {
+                                    if(!tempC.backgroundColor) setCanvasBackground(tempC);
+                                    resolve();
+                                });
+                            } else {
+                                tempC.clear();
+                                setCanvasBackground(tempC);
+                                resolve();
+                            }
+                        });
+                        tempC.renderAll();
+                        const blob = await new Promise(r => tempEl.toBlob(r, 'image/png'));
+                        files.push(new File([blob], `page_${i + 1}.png`, { type: "image/png" }));
+                    }
+
+                    if (navigator.canShare && navigator.canShare({ files: files })) {
+                        await navigator.share({ files: files });
+                    } else {
+                        txt.innerText = "ZIP作成中...";
+                        const zip = new JSZip();
+                        files.forEach(f => zip.file(f.name, f));
+                        const content = await zip.generateAsync({type:"blob"});
+                        const a = document.createElement('a');
+                        a.href = URL.createObjectURL(content);
+                        a.download = "images.zip";
+                        a.click();
+                    }
+                } catch(e) { alert("エラー: " + e); } finally {
+                    overlay.style.display = 'none';
+                    isProcessing = false;
+                }
+            };
+
+            // NotebookLM
+            document.getElementById('openNotebookLM').onclick = () => {
+                window.open('https://notebooklm.google.com/', '_blank');
+            };
+
+            // ページ移動
+            document.getElementById('prevPage').onclick = () => { if(curP > 0) switchPage(curP - 1); };
+            document.getElementById('nextPage').onclick = () => {
+                if(curP < pages.length - 1) switchPage(curP + 1);
+                else { pages.push(null); switchPage(curP + 1); }
+            };
+
+            // Undo/Redo
+            document.getElementById('undoBtn').onclick = () => { if(hIdx > 0) { hIdx--; restore(); }};
+            document.getElementById('redoBtn').onclick = () => { if(hIdx < history.length - 1) { hIdx++; restore(); }};
+            function restore() {
+                clearTimeout(saveTimer);
+                suppressHistory = true;
+                canvas.loadFromJSON(history[hIdx], () => {
+                    if(!canvas.backgroundColor) setCanvasBackground(canvas);
+                    applyModeLocks();
+                    canvas.renderAll();
+                    suppressHistory = false;
+                    // 復元した状態をIDBに保存
+                    snapshot();
+                    saveToIDB(pages).then(() => {
+                        document.getElementById('status').innerText = "保存完了";
+                    }).catch(() => {});
+                });
+            }
+
+            // ★ 起動: IndexedDB → localStorage移行 → 空ページ
+            switchPage(0, true);
+            (async () => {
+                try {
+                    const initData = await loadFromIDB();
+                    if (initData && Array.isArray(initData)) {
+                        pages = initData;
+                        switchPage(0, true);
+                    } else {
+                        const lsData = localStorage.getItem(LS_KEY);
+                        if (lsData) {
+                            try {
+                                pages = JSON.parse(lsData);
+                                if (!Array.isArray(pages)) pages = [null];
+                                await saveToIDB(pages);
+                                localStorage.removeItem(LS_KEY);
+                                switchPage(0, true);
+                            } catch(e) { pages = [null]; }
+                        }
+                    }
+                } catch(e) {
+                    const lsData = localStorage.getItem(LS_KEY);
+                    if (lsData) {
+                        try { pages = JSON.parse(lsData); if (!Array.isArray(pages)) pages = [null]; } catch(e) { pages = [null]; }
+                        switchPage(0, true);
+                    }
+                }
+            })();
+        });
+    </script>
+</body>
+</html>
